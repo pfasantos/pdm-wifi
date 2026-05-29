@@ -1,0 +1,15 @@
+menu "Connection Configuration"
+
+    config SERVER_IP_ADDR
+        string "Server IP Address"
+        default "10.0.0.48"
+        help
+            IP address of the UDP server.
+
+    config SERVER_PORT
+        int "Server Port"
+        default 8888 
+        help
+            Port of the UDP server.
+
+endmenu
