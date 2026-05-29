@@ -8,11 +8,19 @@
 
 #include "esp_log.h"
 #include "driver/i2s_std.h"
+#include "nvs_flash.h"
+#include "protocol_examples_common.h"
+
+#include "esp_netif.h"
+#include "esp_event.h"
+
+#include "lwip/err.h"
+#include "lwip/sockets.h"
+#include "lwip/sys.h"
 
 #include "i2s_std.h"
 #include "pdm2pcm.h"
 #include "main.h"
-#include "wifi.h"
 
 // handles
 static QueueHandle_t xQueueHandle;
@@ -20,7 +28,7 @@ static TimerHandle_t xRecTimerHandle;
 static TaskHandle_t xTaskReadHandle;
 static TaskHandle_t xTaskWifiHandle;
 
-//filtering structures
+//filter structure
 static app_cic_t cic;
 
 // buffers
@@ -46,6 +54,7 @@ void vTaskRead(void *pvParameters)
         if (i2s_channel_read(rx_handle, (void *)rx_buffer, BUF_SIZE, NULL, portMAX_DELAY) == ESP_OK)
         {
             process_app_cic(&cic, &rx_buffer, &data_buffer);
+            process_new_fir(&data_buffer);
             xQueueSend(xQueueHandle, &data_buffer, portMAX_DELAY);
         }
         else
@@ -63,27 +72,60 @@ void vTaskRead(void *pvParameters)
 
 void vTaskWifi(void *pvParameters)
 {
-    while (1)
-    {
-        if ((xQueueHandle != NULL) && (xQueueReceive(xQueueHandle, sd_buffer, pdMS_TO_TICKS(500)) == pdTRUE))
-        {
-            process_new_fir(&sd_buffer);
-        }
-        // iriie what is left when reading ends 
-        if (ulTaskNotifyTake(pdTRUE, 0) != 0)
-        {
-            while (uxQueueMessagesWaiting(xQueueHandle) > 0)
-            {
-                if (xQueueReceive(xQueueHandle, sd_buffer, 0) == pdTRUE)
-                {
-                    process_new_fir(&sd_buffer);
-                }
-            }
+    // configurando endereco do servidor
+    struct sockaddr_in dest_addr = {
+        .sin_addr.s_addr = inet_addr(SERVER_IP_ADDR),
+        .sin_family = AF_INET,
+        .sin_port = htons(SERVER_PORT),
+    };
+
+    while (1) {
+
+        // criar socket UDP
+        int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+        if (sock < 0) {
+            ESP_LOGE(UDP_TAG, "Falha ao criar socket: errno %d", errno);
             break;
         }
+
+    ESP_LOGI(UDP_TAG, "Socket criado. Destino dos pacotes %s:%d", SERVER_IP_ADDR, SERVER_PORT);
+
+    while (1) {
+        if (ulTaskNotifyTake(pdTRUE, 0) != 0)
+        {
+            break;
+        }
+
+        if(
+        (xQueueHandle!=NULL) &&
+        (xQueueReceive(xQueueHandle, &sd_buffer, 0)==pdTRUE) 
+        ) // esperar que dados sejam lidos
+        {
+            // enviar buffer
+            int err = sendto(
+                sock, 
+                sd_buffer, 
+                BUF_SIZE, 
+                0, 
+                (struct sockaddr *)&dest_addr, 
+                sizeof(dest_addr)
+            );
+
+            // avaliar se envio falhou
+            if (err < 0) {
+                ESP_LOGE(UDP_TAG, "Erro durante o envio: errno %d", errno);
+                break;
+            }
+        }
+        vTaskDelay(1);
     }
 
-    ESP_LOGI(WIFI_TAG, "Envio finalizado");
+    if (sock != -1) {
+        ESP_LOGE(UDP_TAG, "Desativando socket e reiniciando...");
+        shutdown(sock, 0);
+        close(sock);
+        }
+    } 
     vTaskDelete(NULL);
 }
 
@@ -97,20 +139,27 @@ void vRecTimer(TimerHandle_t xTimerHandle)
 
 // FUNCTIONS SECTION ------------------------
 
+
 // MAIN SETUP SECTION -----------------------
 
 void app_main(void)
 {
     i2s_init();
     
+    init_app_cic(&cic);
+    
+    // i2s init in lower clock to prevent mic damage
     i2s_channel_enable(rx_handle);
     vTaskDelay(pdMS_TO_TICKS(5));
     i2s_channel_disable(rx_handle);
     i2s_channel_reconfig_std_clock(rx_handle, &clk_rec_cfg);
     i2s_channel_enable(rx_handle);
 
-    init_app_cic(&cic);
-
+    ESP_ERROR_CHECK(nvs_flash_init()); // inicializar NVS
+    ESP_ERROR_CHECK(esp_netif_init()); // inicializar lwIP
+    ESP_ERROR_CHECK(esp_event_loop_create_default()); // criar event loop para eventos Wi-Fi
+    ESP_ERROR_CHECK(example_connect()); // funcao do protocol_examples_common.h para auxiliar na conexao Wi-Fi
+    
     xQueueHandle = xQueueCreate(DMA_BUF_NUM, PCM_BUF_SIZE * sizeof(short));
     if (xQueueHandle == NULL)
     {
