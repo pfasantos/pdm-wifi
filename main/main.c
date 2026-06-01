@@ -22,13 +22,15 @@
 #include "pdm2pcm.h"
 #include "main.h"
 
+#include "esp_timer.h"
+
 // handles
 static QueueHandle_t xQueueHandle;
 static TimerHandle_t xRecTimerHandle;
 static TaskHandle_t xTaskReadHandle;
 static TaskHandle_t xTaskWifiHandle;
 
-//filter structure
+// filter structure
 static app_cic_t cic;
 
 // buffers
@@ -43,6 +45,11 @@ static i2s_std_clk_config_t clk_rec_cfg = I2S_STD_CLK_DEFAULT_CONFIG(75000);
 
 void vTaskRead(void *pvParameters)
 {
+    int read_count = 0;
+    ESP_LOGI(READ_TAG, "Leitura I2S iniciada");
+
+    printf("%lld", esp_timer_get_time());
+    xTimerStart(xRecTimerHandle, 0);
     while (1)
     {
         if (ulTaskNotifyTake(pdTRUE, 0) != 0)
@@ -50,12 +57,13 @@ void vTaskRead(void *pvParameters)
             break;
         }
 
-        // wait untill rx_buffer is full 
+        // wait untill rx_buffer is full
         if (i2s_channel_read(rx_handle, (void *)rx_buffer, BUF_SIZE, NULL, portMAX_DELAY) == ESP_OK)
         {
             process_app_cic(&cic, &rx_buffer, &data_buffer);
             process_new_fir(&data_buffer);
             xQueueSend(xQueueHandle, &data_buffer, portMAX_DELAY);
+            read_count++;
         }
         else
         {
@@ -63,7 +71,9 @@ void vTaskRead(void *pvParameters)
             break;
         }
     }
-    ESP_LOGI(READ_TAG, "Leitura I2S terminada");
+    ESP_LOGI(READ_TAG, "Leitura I2S terminada: %d blocos lidos", read_count);
+
+    printf("%lld", esp_timer_get_time());
     i2s_stop();
 
     xTaskNotifyGive(xTaskWifiHandle);
@@ -72,60 +82,64 @@ void vTaskRead(void *pvParameters)
 
 void vTaskWifi(void *pvParameters)
 {
-    // configurando endereco do servidor
+    int sent = 0;
+
     struct sockaddr_in dest_addr = {
         .sin_addr.s_addr = inet_addr(SERVER_IP_ADDR),
         .sin_family = AF_INET,
         .sin_port = htons(SERVER_PORT),
     };
 
-    while (1) {
-
+    while (1)
+    {
         // criar socket UDP
         int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
-        if (sock < 0) {
+        if (sock < 0)
+        {
             ESP_LOGE(UDP_TAG, "Falha ao criar socket: errno %d", errno);
             break;
         }
 
-    ESP_LOGI(UDP_TAG, "Socket criado. Destino dos pacotes %s:%d", SERVER_IP_ADDR, SERVER_PORT);
+        ESP_LOGI(UDP_TAG, "Socket criado. Destino dos pacotes %s:%d", SERVER_IP_ADDR, SERVER_PORT);
 
-    while (1) {
-        if (ulTaskNotifyTake(pdTRUE, 0) != 0)
+        while (1)
         {
-            break;
-        }
-
-        if(
-        (xQueueHandle!=NULL) &&
-        (xQueueReceive(xQueueHandle, &sd_buffer, 0)==pdTRUE) 
-        ) // esperar que dados sejam lidos
-        {
-            // enviar buffer
-            int err = sendto(
-                sock, 
-                sd_buffer, 
-                BUF_SIZE, 
-                0, 
-                (struct sockaddr *)&dest_addr, 
-                sizeof(dest_addr)
-            );
-
-            // avaliar se envio falhou
-            if (err < 0) {
-                ESP_LOGE(UDP_TAG, "Erro durante o envio: errno %d", errno);
+            if (ulTaskNotifyTake(pdTRUE, 0) != 0)
+            {
                 break;
             }
-        }
-        vTaskDelay(1);
-    }
 
-    if (sock != -1) {
-        ESP_LOGE(UDP_TAG, "Desativando socket e reiniciando...");
-        shutdown(sock, 0);
-        close(sock);
+            if (
+                (xQueueHandle != NULL) &&
+                (xQueueReceive(xQueueHandle, &sd_buffer, 0) == pdTRUE))
+            {
+                // send buffer
+                int err = sendto(
+                    sock,
+                    sd_buffer,
+                    BUF_SIZE,
+                    0,
+                    (struct sockaddr *)&dest_addr,
+                    sizeof(dest_addr));
+
+                if (err < 0)
+                {
+                    ESP_LOGE(UDP_TAG, "Erro durante o envio: errno %d", errno);
+                    break;
+                }
+                sent++;
+            }
+            vTaskDelay(1);
         }
-    } 
+
+        if (sock != -1)
+        {
+            ESP_LOGE(UDP_TAG, "Desativando socket e reiniciando...");
+            ESP_LOGI(UDP_TAG, "enviou %d blocos", sent);
+            shutdown(sock, 0);
+            close(sock);
+        }
+    }
     vTaskDelete(NULL);
 }
 
@@ -139,15 +153,14 @@ void vRecTimer(TimerHandle_t xTimerHandle)
 
 // FUNCTIONS SECTION ------------------------
 
-
 // MAIN SETUP SECTION -----------------------
 
 void app_main(void)
 {
     i2s_init();
-    
+
     init_app_cic(&cic);
-    
+
     // i2s init in lower clock to prevent mic damage
     i2s_channel_enable(rx_handle);
     vTaskDelay(pdMS_TO_TICKS(5));
@@ -155,16 +168,17 @@ void app_main(void)
     i2s_channel_reconfig_std_clock(rx_handle, &clk_rec_cfg);
     i2s_channel_enable(rx_handle);
 
-    ESP_ERROR_CHECK(nvs_flash_init()); // inicializar NVS
-    ESP_ERROR_CHECK(esp_netif_init()); // inicializar lwIP
-    ESP_ERROR_CHECK(esp_event_loop_create_default()); // criar event loop para eventos Wi-Fi
-    ESP_ERROR_CHECK(example_connect()); // funcao do protocol_examples_common.h para auxiliar na conexao Wi-Fi
-    
+    ESP_ERROR_CHECK(nvs_flash_init());
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    ESP_ERROR_CHECK(example_connect());
+
     xQueueHandle = xQueueCreate(DMA_BUF_NUM, PCM_BUF_SIZE * sizeof(short));
     if (xQueueHandle == NULL)
     {
         ESP_LOGE(MAIN_TAG, "Falha em criar fila de dados");
-        while (1);
+        while (1)
+            ;
     }
 
     xRecTimerHandle = xTimerCreate(
@@ -177,7 +191,8 @@ void app_main(void)
     if (xRecTimerHandle == NULL)
     {
         ESP_LOGE(MAIN_TAG, "Falha ao criar o timer");
-        while (1);
+        while (1)
+            ;
     }
 
     BaseType_t xReturnedTask[2];
@@ -186,7 +201,7 @@ void app_main(void)
         "taskREAD",
         configMINIMAL_STACK_SIZE + 4096,
         NULL,
-        configMAX_PRIORITIES - 3,
+        configMAX_PRIORITIES - 2,
         &xTaskReadHandle,
         APP_CPU_NUM);
 
@@ -198,17 +213,17 @@ void app_main(void)
         configMAX_PRIORITIES - 3,
         &xTaskWifiHandle,
         PRO_CPU_NUM);
-    
+
     // test tasks creation
     for (int i = 0; i < 2; i++)
     {
         if (xReturnedTask[i] == pdFAIL)
         {
             ESP_LOGE(MAIN_TAG, "Erro ao criar a task %d", i);
-            while (1);
+            while (1)
+                ;
         }
     }
 
-    xTimerStart(xRecTimerHandle, 0);
     ESP_LOGI(MAIN_TAG, "Gravacao iniciada");
 }

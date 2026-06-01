@@ -5,11 +5,11 @@ import os
 UDP_IP = "0.0.0.0"  # Escuta em todas as interfaces
 UDP_PORT = 8888
 BUFFER_SIZE = 65536 # Buffer de leitura do socket (maior que o pacote)
-OUTPUT_FILE = "resultados/teste_python"
+OUTPUT_FILE = "resultados/teste_5khz"
 
 # Tenta aumentar o buffer de recepção do Kernel do Linux
 # Isso é CRÍTICO para evitar drops em pacotes fragmentados
-RECV_BUF_SIZE = 4 * 1024 * 1024 # 4MB
+RECV_BUF_SIZE = 5 * 1024 * 1024 # 4MB
 
 def run_receiver():
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -35,7 +35,7 @@ def run_receiver():
         try:
             while True:
                 # Timeout de 10 segundos se parar de receber
-                sock.settimeout(10.0)
+                sock.settimeout(15.0)
                 data, addr = sock.recvfrom(BUFFER_SIZE)
                 if not data:
                     break

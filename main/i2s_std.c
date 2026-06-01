@@ -24,7 +24,7 @@ void i2s_init()
         .slot_cfg = I2S_STD_MSB_SLOT_DEFAULT_CONFIG(BIT_DEPTH, I2S_SLOT_MODE_STEREO),
         .gpio_cfg = {
             .mclk = I2S_GPIO_UNUSED,
-            .bclk = GPIO_NUM_21,
+            .bclk = GPIO_NUM_5,
             .ws = I2S_GPIO_UNUSED,
             .dout = I2S_GPIO_UNUSED,
             .din = GPIO_NUM_4,

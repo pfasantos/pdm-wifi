@@ -118,5 +118,5 @@ dependencies:
 direct_dependencies:
 - espressif/ethernet_init
 manifest_hash: 076cc157ef57308da045a30b7044bfe8ca557906d0eefb8c2832885f73b2927a
-target: esp32
+target: esp32s3
 version: 3.0.0
