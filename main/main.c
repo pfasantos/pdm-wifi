@@ -93,18 +93,27 @@ void vTaskWifi(void *pvParameters)
     while (1)
     {
         // criar socket UDP
-        int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
+        int sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (sock < 0)
         {
             ESP_LOGE(UDP_TAG, "Falha ao criar socket: errno %d", errno);
             break;
         }
-
         ESP_LOGI(UDP_TAG, "Socket criado. Destino dos pacotes %s:%d", SERVER_IP_ADDR, SERVER_PORT);
+
+        int err = connect(sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+        if (err != 0)
+        {
+            ESP_LOGE(UDP_TAG, "Falha ao conectar: errno %d", errno);
+            close(sock);
+            break;
+        }
+        ESP_LOGI(UDP_TAG, "Conectado ao servidor %s:%d", SERVER_IP_ADDR, SERVER_PORT);
+
 
         while (1)
         {
-            if ((ulTaskNotifyTake(pdTRUE, 0) != 0) && (uxQueueMessagesWaiting(xQueueHandle) != 0 ))
+            if ((ulTaskNotifyTake(pdTRUE, 0) != 0) && (uxQueueMessagesWaiting(xQueueHandle) !=0))
             {
                 break;
             }
@@ -114,14 +123,7 @@ void vTaskWifi(void *pvParameters)
                 (xQueueReceive(xQueueHandle, &sd_buffer, 0) == pdTRUE))
             {
                 // send buffer
-                int err = sendto(
-                    sock,
-                    sd_buffer,
-                    BUF_SIZE,
-                    0,
-                    (struct sockaddr *)&dest_addr,
-                    sizeof(dest_addr));
-
+                int err = send(sock, sd_buffer, BUF_SIZE, 0);
                 if (err < 0)
                 {
                     ESP_LOGE(UDP_TAG, "Erro durante o envio: errno %d", errno);
