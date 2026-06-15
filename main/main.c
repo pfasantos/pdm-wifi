@@ -104,7 +104,7 @@ void vTaskWifi(void *pvParameters)
 
         while (1)
         {
-            if (ulTaskNotifyTake(pdTRUE, 0) != 0)
+            if ((ulTaskNotifyTake(pdTRUE, 0) != 0) && (uxQueueMessagesWaiting(xQueueHandle) != 0 ))
             {
                 break;
             }
