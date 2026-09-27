@@ -53,4 +53,4 @@ The I2S configuration starts at 8,000 and is reconfigured to 75,000 before captu
 
 ## API documentation
 
-Generate the Doxygen HTML reference with `doxygen Doxyfile` from the repository root, then open `build/doxygen/html/index.html`. Generated files stay under the ignored `build/` directory.
+Generate the Doxygen HTML reference with `doxygen Doxyfile` from the repository root, then open `build/html/index.html`. Generated files stay under the ignored `build/` directory.
