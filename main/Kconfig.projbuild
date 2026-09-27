@@ -4,12 +4,51 @@ menu "Connection Configuration"
         string "Server IP Address"
         default "10.0.0.48"
         help
-            IP address of the UDP server.
+            IP address of the TCP server.
 
     config SERVER_PORT
         int "Server Port"
-        default 8888 
+        default 8888
         help
-            Port of the UDP server.
+            Port of the TCP server.
+
+endmenu
+
+menu "PDM recorder configuration"
+
+    config PDM_I2S_START_RATE_HZ
+        int "I2S startup sample rate (Hz)"
+        range 1000 192000
+        default 8000
+        help
+            Initial low I2S clock used before capture starts.
+
+    config PDM_I2S_RECORD_RATE_HZ
+        int "I2S recording sample rate (Hz)"
+        range 1000 192000
+        default 75000
+        help
+            I2S clock rate configured for the recording phase.
+
+    config PDM_DMA_BUFFER_COUNT
+        int "I2S DMA buffer count"
+        range 2 64
+        default 8
+        help
+            Number of I2S DMA descriptors. Higher values use more RAM.
+
+    config PDM_DMA_FRAME_COUNT
+        int "I2S DMA frames per buffer"
+        range 64 1024
+        default 511
+        help
+            Number of stereo frames in each I2S DMA buffer.
+
+    config PDM_RECORDING_DURATION_SECONDS
+        int "Recording duration (seconds)"
+        range 1 3600
+        default 120
+        help
+            Duration before the recording timer requests acquisition to stop.
 
 endmenu
