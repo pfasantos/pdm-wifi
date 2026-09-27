@@ -14,7 +14,7 @@
 #include "esp_netif.h"
 #include "esp_event.h"
 
-#include "lwip/iSocketError.h"
+#include "lwip/err.h"
 #include "lwip/sockets.h"
 #include "lwip/sys.h"
 
@@ -94,14 +94,14 @@ void vTaskWifi(void *pvParameters)
 
     for (;;)
     {
-        // criar socket UDP
+        // Create a TCP stream socket.
         int iSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         if (iSocket < 0)
         {
             ESP_LOGE(MAIN_TCP_TAG, "Falha ao criar socket: errno %d", errno);
             break;
         }
-        ESP_LOGI(MAIN_TCP_TAG, "TCP socket connected to %s:%d", CONFIG_SERVER_IP_ADDR,
+        ESP_LOGI(MAIN_TCP_TAG, "TCP socket created for %s:%d", CONFIG_SERVER_IP_ADDR,
                  CONFIG_SERVER_PORT);
 
         int iSocketError =
@@ -205,11 +205,11 @@ void app_main(void)
                                 configMAX_PRIORITIES - 3, &xWifiTask, PRO_CPU_NUM);
 
     // test tasks creation
-    for (int i = 0; i < 2; i++)
+    for (int iTaskIndex = 0; iTaskIndex < 2; iTaskIndex++)
     {
-        if (xTaskCreateStatus[i] == pdFAIL)
+        if (xTaskCreateStatus[iTaskIndex] == pdFAIL)
         {
-            ESP_LOGE(MAIN_TAG, "Erro ao criar a task %d", i);
+            ESP_LOGE(MAIN_TAG, "Erro ao criar a task %d", iTaskIndex);
             for (;;)
                 ;
         }
