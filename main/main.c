@@ -155,6 +155,9 @@ void vRecTimer(TimerHandle_t xTimerHandle)
 
 // MAIN SETUP SECTION -----------------------
 
+/** @brief Initialize I2S and Wi-Fi, then start the reader and UDP sender.
+ *  @warning The destination comes from main.h, not Kconfig.projbuild.
+ */
 void app_main(void)
 {
     i2s_init();

@@ -1,3 +1,9 @@
+"""Receive fixed-size raw PCM datagrams from the ESP32-S3 over UDP.
+
+Set UDP_PORT to match main/main.h and choose OUTPUT_FILE before running.
+Datagrams are concatenated without sequence numbers or loss detection.
+"""
+
 import socket
 import os
 
@@ -12,6 +18,11 @@ OUTPUT_FILE = "resultados/teste_5khz"
 RECV_BUF_SIZE = 5 * 1024 * 1024 # 4MB
 
 def run_receiver():
+    """Listen for UDP sample buffers and write them to OUTPUT_FILE.
+
+    Stops after 15 seconds without a packet or on Ctrl+C. Socket and file
+    errors other than the receive timeout are not handled by this script.
+    """
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.bind((UDP_IP, UDP_PORT))
     
