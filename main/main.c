@@ -25,45 +25,47 @@
 #include "esp_timer.h"
 
 // handles
-static QueueHandle_t xQueueHandle;
-static TimerHandle_t xRecTimerHandle;
-static TaskHandle_t xTaskReadHandle;
-static TaskHandle_t xTaskWifiHandle;
+static QueueHandle_t xPcmQueue;
+static TimerHandle_t xRecordingTimer;
+static TaskHandle_t xReaderTask;
+static TaskHandle_t xWifiTask;
 
 // filter structure
-static app_cic_t cic;
+static app_cic_t xCic;
 
 // buffers
-static long rx_buffer[PDM_BUF_SIZE];
-static short sd_buffer[PCM_BUF_SIZE];
-static short data_buffer[PCM_BUF_SIZE];
+static long plPdmBuffer[MAIN_PDM_BUFFER_SIZE];
+static short psWifiBuffer[MAIN_PCM_BUFFER_SIZE];
+static short psPcmBuffer[MAIN_PCM_BUFFER_SIZE];
 
 // clock reconfig
-static i2s_std_clk_config_t clk_rec_cfg = I2S_STD_CLK_DEFAULT_CONFIG(75000);
+static i2s_std_clk_config_t xRecordingClockConfig =
+    I2S_STD_CLK_DEFAULT_CONFIG(CONFIG_PDM_I2S_RECORD_RATE_HZ);
 
 // TASKS SECTION --------------------------
 
 void vTaskRead(void *pvParameters)
 {
-    int read_count = 0;
-    ESP_LOGI(READ_TAG, "Leitura I2S iniciada");
+    int iReadCount = 0;
+    ESP_LOGI(MAIN_READ_TAG, "Leitura I2S iniciada");
 
     printf("%lld", esp_timer_get_time());
-    xTimerStart(xRecTimerHandle, 0);
-    while (1)
+    xTimerStart(xRecordingTimer, 0);
+    for (;;)
     {
         if (ulTaskNotifyTake(pdTRUE, 0) != 0)
         {
             break;
         }
 
-        // wait untill rx_buffer is full
-        if (i2s_channel_read(rx_handle, (void *)rx_buffer, BUF_SIZE, NULL, portMAX_DELAY) == ESP_OK)
+        // wait untill plPdmBuffer is full
+        if (i2s_channel_read(xRxHandle, (void *)plPdmBuffer, I2S_BUFFER_SIZE, NULL,
+                             portMAX_DELAY) == ESP_OK)
         {
-            process_app_cic(&cic, &rx_buffer, &data_buffer);
-            process_new_fir(&data_buffer);
-            xQueueSend(xQueueHandle, &data_buffer, portMAX_DELAY);
-            read_count++;
+            process_app_cic(&xCic, &plPdmBuffer, &psPcmBuffer);
+            process_new_fir(&psPcmBuffer);
+            xQueueSend(xPcmQueue, &psPcmBuffer, portMAX_DELAY);
+            iReadCount++;
         }
         else
         {
@@ -71,73 +73,74 @@ void vTaskRead(void *pvParameters)
             break;
         }
     }
-    ESP_LOGI(READ_TAG, "Leitura I2S terminada: %d blocos lidos", read_count);
+    ESP_LOGI(MAIN_READ_TAG, "Leitura I2S terminada: %d blocos lidos", iReadCount);
 
     printf("%lld", esp_timer_get_time());
-    i2s_stop();
+    vI2SStdStop();
 
-    xTaskNotifyGive(xTaskWifiHandle);
+    xTaskNotifyGive(xWifiTask);
     vTaskDelete(NULL);
 }
 
 void vTaskWifi(void *pvParameters)
 {
-    int sent = 0;
+    int iSentBlocks = 0;
 
-    struct sockaddr_in dest_addr = {
-        .sin_addr.s_addr = inet_addr(SERVER_IP_ADDR),
+    struct sockaddr_in xDestinationAddress = {
+        .sin_addr.s_addr = inet_addr(CONFIG_SERVER_IP_ADDR),
         .sin_family = AF_INET,
-        .sin_port = htons(SERVER_PORT),
+        .sin_port = htons(CONFIG_SERVER_PORT),
     };
 
-    while (1)
+    for (;;)
     {
-        // criar socket UDP
-        int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_IP);
-        if (sock < 0)
+        // Create a TCP stream socket.
+        int iSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (iSocket < 0)
         {
-            ESP_LOGE(UDP_TAG, "Falha ao criar socket: errno %d", errno);
+            ESP_LOGE(MAIN_TCP_TAG, "Falha ao criar socket: errno %d", errno);
             break;
         }
+        ESP_LOGI(MAIN_TCP_TAG, "TCP socket created for %s:%d", CONFIG_SERVER_IP_ADDR,
+                 CONFIG_SERVER_PORT);
 
-        ESP_LOGI(UDP_TAG, "Socket criado. Destino dos pacotes %s:%d", SERVER_IP_ADDR, SERVER_PORT);
-
-        while (1)
+        int iSocketError =
+            connect(iSocket, (struct sockaddr *)&xDestinationAddress, sizeof(xDestinationAddress));
+        if (iSocketError != 0)
         {
-            if (ulTaskNotifyTake(pdTRUE, 0) != 0)
+            ESP_LOGE(MAIN_TCP_TAG, "Falha ao conectar: errno %d", errno);
+            close(iSocket);
+            break;
+        }
+        ESP_LOGI(MAIN_TCP_TAG, "TCP connected to %s:%d", CONFIG_SERVER_IP_ADDR, CONFIG_SERVER_PORT);
+
+        for (;;)
+        {
+            if ((ulTaskNotifyTake(pdTRUE, 0) != 0) && (uxQueueMessagesWaiting(xPcmQueue) != 0))
             {
                 break;
             }
 
-            if (
-                (xQueueHandle != NULL) &&
-                (xQueueReceive(xQueueHandle, &sd_buffer, 0) == pdTRUE))
+            if ((xPcmQueue != NULL) && (xQueueReceive(xPcmQueue, &psWifiBuffer, 0) == pdTRUE))
             {
                 // send buffer
-                int err = sendto(
-                    sock,
-                    sd_buffer,
-                    BUF_SIZE,
-                    0,
-                    (struct sockaddr *)&dest_addr,
-                    sizeof(dest_addr));
-
-                if (err < 0)
+                int iSocketError = send(iSocket, psWifiBuffer, I2S_BUFFER_SIZE, 0);
+                if (iSocketError < 0)
                 {
-                    ESP_LOGE(UDP_TAG, "Erro durante o envio: errno %d", errno);
+                    ESP_LOGE(MAIN_TCP_TAG, "Erro durante o envio: errno %d", errno);
                     break;
                 }
-                sent++;
+                iSentBlocks++;
             }
             vTaskDelay(1);
         }
 
-        if (sock != -1)
+        if (iSocket != -1)
         {
-            ESP_LOGE(UDP_TAG, "Desativando socket e reiniciando...");
-            ESP_LOGI(UDP_TAG, "enviou %d blocos", sent);
-            shutdown(sock, 0);
-            close(sock);
+            ESP_LOGE(MAIN_TCP_TAG, "Closing TCP socket and restarting...");
+            ESP_LOGI(MAIN_TCP_TAG, "enviou %d blocos", iSentBlocks);
+            shutdown(iSocket, 0);
+            close(iSocket);
         }
     }
     vTaskDelete(NULL);
@@ -145,85 +148,69 @@ void vTaskWifi(void *pvParameters)
 
 // TIMERS SECTION --------------------------
 
-void vRecTimer(TimerHandle_t xTimerHandle)
+void vMainRecTimer(TimerHandle_t xTimer)
 {
-    xTaskNotifyGive(xTaskReadHandle);
-    ESP_LOGI(TIMER_TAG, "Tempo de gravacao acabou.");
+    xTaskNotifyGive(xReaderTask);
+    ESP_LOGI(MAIN_TIMER_TAG, "Tempo de gravacao acabou.");
 }
 
 // FUNCTIONS SECTION ------------------------
 
 // MAIN SETUP SECTION -----------------------
 
-/** @brief Initialize I2S and Wi-Fi, then start the reader and UDP sender.
- *  @warning The destination comes from main.h, not Kconfig.projbuild.
- */
 void app_main(void)
 {
-    i2s_init();
+    vI2SStdInit();
 
-    init_app_cic(&cic);
+    init_app_cic(&xCic);
 
     // i2s init in lower clock to prevent mic damage
-    i2s_channel_enable(rx_handle);
+    i2s_channel_enable(xRxHandle);
     vTaskDelay(pdMS_TO_TICKS(5));
-    i2s_channel_disable(rx_handle);
-    i2s_channel_reconfig_std_clock(rx_handle, &clk_rec_cfg);
-    i2s_channel_enable(rx_handle);
+    i2s_channel_disable(xRxHandle);
+    i2s_channel_reconfig_std_clock(xRxHandle, &xRecordingClockConfig);
+    i2s_channel_enable(xRxHandle);
 
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
     ESP_ERROR_CHECK(example_connect());
 
-    xQueueHandle = xQueueCreate(DMA_BUF_NUM, PCM_BUF_SIZE * sizeof(short));
-    if (xQueueHandle == NULL)
+    xPcmQueue = xQueueCreate(CONFIG_PDM_DMA_BUFFER_COUNT, MAIN_PCM_BUFFER_SIZE * sizeof(short));
+    if (xPcmQueue == NULL)
     {
         ESP_LOGE(MAIN_TAG, "Falha em criar fila de dados");
-        while (1)
+        for (;;)
             ;
     }
 
-    xRecTimerHandle = xTimerCreate(
-        "REC timer",
-        pdMS_TO_TICKS(REC_TIME_MS),
-        pdFALSE,
-        (void *)0,
-        vRecTimer);
+    xRecordingTimer =
+        xTimerCreate("REC timer", pdMS_TO_TICKS(CONFIG_PDM_RECORDING_DURATION_SECONDS * 1000U),
+                     pdFALSE, (void *)0, vMainRecTimer);
 
-    if (xRecTimerHandle == NULL)
+    if (xRecordingTimer == NULL)
     {
         ESP_LOGE(MAIN_TAG, "Falha ao criar o timer");
-        while (1)
+        for (;;)
             ;
     }
 
-    BaseType_t xReturnedTask[2];
-    xReturnedTask[0] = xTaskCreatePinnedToCore(
-        vTaskRead,
-        "taskREAD",
-        configMINIMAL_STACK_SIZE + 4096,
-        NULL,
-        configMAX_PRIORITIES - 2,
-        &xTaskReadHandle,
-        APP_CPU_NUM);
+    BaseType_t xTaskCreateStatus[2];
+    xTaskCreateStatus[0] =
+        xTaskCreatePinnedToCore(vTaskRead, "taskREAD", configMINIMAL_STACK_SIZE + 4096, NULL,
+                                configMAX_PRIORITIES - 2, &xReaderTask, APP_CPU_NUM);
 
-    xReturnedTask[1] = xTaskCreatePinnedToCore(
-        vTaskWifi,
-        "taskWifi",
-        configMINIMAL_STACK_SIZE + 4096,
-        NULL,
-        configMAX_PRIORITIES - 3,
-        &xTaskWifiHandle,
-        PRO_CPU_NUM);
+    xTaskCreateStatus[1] =
+        xTaskCreatePinnedToCore(vTaskWifi, "taskWifi", configMINIMAL_STACK_SIZE + 4096, NULL,
+                                configMAX_PRIORITIES - 3, &xWifiTask, PRO_CPU_NUM);
 
     // test tasks creation
-    for (int i = 0; i < 2; i++)
+    for (int iTaskIndex = 0; iTaskIndex < 2; iTaskIndex++)
     {
-        if (xReturnedTask[i] == pdFAIL)
+        if (xTaskCreateStatus[iTaskIndex] == pdFAIL)
         {
-            ESP_LOGE(MAIN_TAG, "Erro ao criar a task %d", i);
-            while (1)
+            ESP_LOGE(MAIN_TAG, "Erro ao criar a task %d", iTaskIndex);
+            for (;;)
                 ;
         }
     }
