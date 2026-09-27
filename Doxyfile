@@ -1,6 +1,6 @@
 # Run from the repository root: doxygen Doxyfile
 PROJECT_NAME           = "pdm-wifi"
-OUTPUT_DIRECTORY       = build/doxygen
+OUTPUT_DIRECTORY       = build
 INPUT                  = README.md main
 FILE_PATTERNS          = *.md *.c *.h
 RECURSIVE              = YES
