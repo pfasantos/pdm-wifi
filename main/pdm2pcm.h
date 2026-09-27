@@ -1,3 +1,30 @@
+/** @file pdm2pcm.h
+ *  @brief Application CIC conversion and post-filter interface.
+ *
+ *  This module converts packed 32-bit microphone words into signed short
+ *  samples. Filter state persists across consecutive buffers.
+ */
+#ifndef _PDM2PCM_H_
+#define _PDM2PCM_H_
+
+#include <stdint.h>
+
+#define SAMPLES 1022
+#define APPLY_MASK(x,i) (int32_t)((((x>>(31-i))&0x00000001) << 1)-1)
+#define INPUT_SAMPLE_SIZE 32
+
+#define MAX_OVERFLOW  1073741823 // (int32_t)(pow(2,30)-1)
+#define MIN_OVERFLOW -1073741824 // (int32_t)(-pow(2,30))
+
+/** State for the two integrator and two comb stages used by the recorder. */
+typedef struct
+{
+    int32_t acc_s1;
+    int32_t acc_s2;
+    int32_t prev_s1;
+    int32_t prev_s2;
+} app_cic_t;
+
 /** @brief Reset the application CIC filter state.
  *  @param cic Filter state to initialize.
  */
